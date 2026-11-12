@@ -1,5 +1,49 @@
-@FEDept.BackendCourse.GroupA1.Api.Template_HostAddress = http://localhost:5117
+@host = http://localhost:5117
+@email = student@example.com
 
-GET {{FEDept.BackendCourse.GroupA1.Api.Template_HostAddress}}/health
+GET {{host}}/health
+
+###
+
+# 201 (confirmation off) or 202 (confirmation on). The code/link arrives in Mailpit: http://localhost:8025
+# @name register
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "секрет12"
+}
+
+###
+
+# OTP: attemptId from the 202 response, code from the email.
+POST {{host}}/auth/register/confirm
+Content-Type: application/json
+
+{
+  "attemptId": "{{register.response.body.$.attemptId}}",
+  "code": "123456"
+}
+
+###
+
+# Magic link: the token from the ?token=... part of the link in the email.
+POST {{host}}/auth/register/confirm
+Content-Type: application/json
+
+{
+  "token": "paste-token-here"
+}
+
+###
+
+# At most once per 60 seconds; replaces the code/link, restarts the 10-minute TTL.
+POST {{host}}/auth/register/resend
+Content-Type: application/json
+
+{
+  "email": "{{email}}"
+}
 
 ###
