@@ -1,4 +1,5 @@
-@host = http://localhost:5117
+# Auth cookies are Secure: use the https profile for the login requests.
+@host = https://localhost:7135
 @email = student@example.com
 
 GET {{host}}/health
@@ -45,5 +46,62 @@ Content-Type: application/json
 {
   "email": "{{email}}"
 }
+
+###
+
+# ---- Login --------------------------------------------------------------
+# Development has LOGIN_EMAIL_CONFIRMATION_ENABLED=true (otp): 202 + attemptId, code in Mailpit.
+# With confirmation off: 204 and the access_token / refresh_token cookies.
+# @name login
+POST {{host}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "секрет12"
+}
+
+###
+
+# OTP: attemptId from the 202 response, code from the email.
+POST {{host}}/auth/login/confirm
+Content-Type: application/json
+
+{
+  "attemptId": "{{login.response.body.$.attemptId}}",
+  "code": "123456"
+}
+
+###
+
+# Magic link: the value after #token= in the emailed link.
+POST {{host}}/auth/login/confirm
+Content-Type: application/json
+
+{
+  "token": "attemptId.secret"
+}
+
+###
+
+POST {{host}}/auth/login/resend
+Content-Type: application/json
+
+{
+  "attemptId": "{{login.response.body.$.attemptId}}"
+}
+
+###
+
+# Uses the cookies stored by the HTTP client after login/confirm.
+GET {{host}}/auth/me
+
+###
+
+POST {{host}}/auth/refresh
+
+###
+
+POST {{host}}/auth/logout
 
 ###

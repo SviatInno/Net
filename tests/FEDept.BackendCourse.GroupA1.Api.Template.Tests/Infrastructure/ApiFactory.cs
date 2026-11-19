@@ -17,6 +17,14 @@ public sealed class ApiFactory(string connectionString, IDictionary<string, stri
 {
     public const string HmacKey = "dGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXktdGVzdC1rZXk=";
 
+    // Distinct 32-byte test keys for login (spec: access, refresh and challenge keys must differ).
+    public const string JwtAccessSecret = "YWNjZXNzLWtleS1hY2Nlc3Mta2V5LWFjY2Vzcy1rZXktMQ==";
+    public const string JwtRefreshSecret = "cmVmcmVzaC1rZXktcmVmcmVzaC1rZXktcmVmcmVzaC0yMg==";
+    public const string LoginChallengeHmacKey = "Y2hhbGxlbmdlLWtleS1jaGFsbGVuZ2Uta2V5LWNoYWwtMw==";
+    public const string AuditHmacKey = "YXVkaXQta2V5LWF1ZGl0LWtleS1hdWRpdC1rZXktYXVkLTQ=";
+    public const string JwtIssuer = "https://localhost";
+    public const string JwtAudience = "backend-course-tests";
+
     public FakeTimeProvider Time { get; } = new(DateTimeOffset.UtcNow);
 
     public FakeEmailSender Emails { get; } = new();
@@ -31,8 +39,38 @@ public sealed class ApiFactory(string connectionString, IDictionary<string, stri
             ["Registration:RegisterRateLimit:PermitLimit"] = registerPermits.ToString(),
         });
 
+    /// <summary>
+    /// The API with login enabled; users registered through it are active right away
+    /// (registration confirmation off), so they can sign in immediately.
+    /// </summary>
+    public static ApiFactory CreateForLogin(
+        PostgresFixture postgres,
+        bool confirmation,
+        string method = "otp",
+        IDictionary<string, string?>? settings = null,
+        string? connectionString = null)
+    {
+        var all = new Dictionary<string, string?>
+        {
+            ["Registration:ConfirmationEnabled"] = "false",
+            ["Registration:RegisterRateLimit:PermitLimit"] = "1000",
+            ["LOGIN_EMAIL_CONFIRMATION_ENABLED"] = confirmation.ToString(),
+            ["LOGIN_EMAIL_CONFIRMATION_METHOD"] = method,
+        };
+        foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
+        {
+            all[key] = value;
+        }
+
+        return new ApiFactory(connectionString ?? postgres.ConnectionString, all);
+    }
+
     public HttpClient CreateApiClient() =>
         CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+    /// <summary>Cookies are not stored by the client: tests read Set-Cookie and send Cookie explicitly.</summary>
+    public HttpClient CreateCookielessClient() =>
+        CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), HandleCookies = false });
 
     public async Task<T> WithDbAsync<T>(Func<AppDbContext, Task<T>> query)
     {
@@ -48,6 +86,13 @@ public sealed class ApiFactory(string connectionString, IDictionary<string, stri
         builder.UseSetting("Registration:HmacKey", HmacKey);
         builder.UseSetting("Registration:MagicLinkUrl", "http://localhost:5173/register/confirm");
         builder.UseSetting("Registration:ResendRateLimit:PermitLimit", "1000");
+        builder.UseSetting("JWT_ACCESS_SECRET", JwtAccessSecret);
+        builder.UseSetting("JWT_REFRESH_SECRET", JwtRefreshSecret);
+        builder.UseSetting("LOGIN_CHALLENGE_HMAC_KEY", LoginChallengeHmacKey);
+        builder.UseSetting("AUDIT_LOG_HMAC_KEY", AuditHmacKey);
+        builder.UseSetting("JWT_ISSUER", JwtIssuer);
+        builder.UseSetting("JWT_AUDIENCE", JwtAudience);
+        builder.UseSetting("LOGIN_MAGIC_LINK_URL", "http://localhost:5173/login/confirm");
         foreach (var (key, value) in settings)
         {
             builder.UseSetting(key, value);

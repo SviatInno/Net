@@ -1,8 +1,8 @@
 using System.Threading.RateLimiting;
 using FEDept.BackendCourse.GroupA1.Api.Template.Email;
+using FEDept.BackendCourse.GroupA1.Api.Template.Infrastructure;
 using FEDept.BackendCourse.GroupA1.Api.Template.Security;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace FEDept.BackendCourse.GroupA1.Api.Template.Features.Registration;
@@ -28,40 +28,19 @@ public static class RegistrationServiceCollectionExtensions
 
         services.AddOptions<SmtpOptions>().Bind(configuration.GetSection(SmtpOptions.SectionName));
 
-        services.AddSingleton<IPasswordHasher, Argon2PasswordHasher>();
+        // Shared with login: TryAdd keeps a single registration whichever feature runs first.
+        services.TryAddSingleton<IPasswordHasher, Argon2PasswordHasher>();
+        services.TryAddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddSingleton<ChallengeSecrets>();
-        services.AddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddScoped<RegistrationService>();
 
+        // Rejection format (429 problem + Retry-After) is shared: see AddApiRateLimiting.
         services.AddRateLimiter(limiter =>
         {
-            limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
             limiter.AddPolicy(RegistrationEndpoints.RegisterRateLimitPolicy, http =>
                 PerClientFixedWindow(http, o => o.RegisterRateLimit));
             limiter.AddPolicy(RegistrationEndpoints.ResendRateLimitPolicy, http =>
                 PerClientFixedWindow(http, o => o.ResendRateLimit));
-            limiter.OnRejected = async (context, cancellationToken) =>
-            {
-                if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
-                {
-                    context.HttpContext.Response.Headers.RetryAfter =
-                        ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-                }
-
-                var problemDetails = context.HttpContext.RequestServices.GetRequiredService<IProblemDetailsService>();
-                var problem = new ProblemDetails
-                {
-                    Status = StatusCodes.Status429TooManyRequests,
-                    Title = "Too many requests",
-                    Detail = "Request rate limit exceeded. Try again later.",
-                };
-                problem.Extensions["code"] = "rate_limited";
-                await problemDetails.WriteAsync(new ProblemDetailsContext
-                {
-                    HttpContext = context.HttpContext,
-                    ProblemDetails = problem,
-                });
-            };
         });
 
         return services;
@@ -71,12 +50,7 @@ public static class RegistrationServiceCollectionExtensions
         HttpContext http, Func<RegistrationOptions, FixedWindowLimit> select)
     {
         var limit = select(http.RequestServices.GetRequiredService<IOptions<RegistrationOptions>>().Value);
-        var client = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        return RateLimitPartition.GetFixedWindowLimiter(client, _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = limit.PermitLimit,
-            Window = TimeSpan.FromSeconds(limit.WindowSeconds),
-            QueueLimit = 0,
-        });
+        return RateLimitingServiceCollectionExtensions.PerClientFixedWindow(
+            http, limit.PermitLimit, TimeSpan.FromSeconds(limit.WindowSeconds));
     }
 }

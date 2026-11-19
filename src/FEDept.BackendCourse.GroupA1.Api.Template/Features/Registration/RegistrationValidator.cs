@@ -1,11 +1,11 @@
-using System.Net.Mail;
 using System.Text;
+using FEDept.BackendCourse.GroupA1.Api.Template.Users;
 
 namespace FEDept.BackendCourse.GroupA1.Api.Template.Features.Registration;
 
 public static class RegistrationValidator
 {
-    public const int MaxEmailLength = 254;
+    public const int MaxEmailLength = UserEmail.MaxLength;
     public const int MinPasswordLength = 8;
 
     /// <summary>
@@ -14,18 +14,10 @@ public static class RegistrationValidator
     /// </summary>
     public const int MaxPasswordLength = 128;
 
-    public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+    public static string NormalizeEmail(string email) => UserEmail.Normalize(email);
 
     /// <returns>An error message, or <c>null</c> when the normalized email is valid.</returns>
-    public static string? ValidateEmail(string? email)
-    {
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            return "Email is required.";
-        }
-
-        return IsValidEmail(NormalizeEmail(email)) ? null : "Email has an invalid format.";
-    }
+    public static string? ValidateEmail(string? email) => UserEmail.Validate(email);
 
     /// <returns>An error message, or <c>null</c> when the password satisfies the policy.</returns>
     public static string? ValidatePassword(string? password)
@@ -61,31 +53,5 @@ public static class RegistrationValidator
         }
 
         return null;
-    }
-
-    private static bool IsValidEmail(string email)
-    {
-        if (email.Length > MaxEmailLength || email.Any(char.IsWhiteSpace))
-        {
-            return false;
-        }
-
-        // MailAddress also accepts "Name <a@b.c>"; require that the input is the bare address.
-        if (!MailAddress.TryCreate(email, out var address)
-            || address.Address != email
-            || address.DisplayName.Length > 0)
-        {
-            return false;
-        }
-
-        var at = email.LastIndexOf('@');
-        var local = email[..at];
-        var domain = email[(at + 1)..];
-
-        return local.Length is > 0 and <= 64
-            && domain.Contains('.')
-            && !domain.Contains("..")
-            && !domain.StartsWith('.') && !domain.EndsWith('.')
-            && !domain.StartsWith('-') && !domain.EndsWith('-');
     }
 }
