@@ -31,6 +31,12 @@ public sealed partial class FakeEmailSender : IEmailSender
     public string LastTokenFor(string email) =>
         Uri.UnescapeDataString(TokenPattern().Match(LastTo(email).TextBody).Groups[1].Value);
 
+    /// <summary>Login magic link token (<c>attemptId.secret</c>), carried in the URL fragment.</summary>
+    public string LastLoginTokenFor(string email) => LoginTokenPattern().Match(LastTo(email).TextBody).Groups[1].Value;
+
+    [GeneratedRegex(@"#token=(\S+)")]
+    private static partial Regex LoginTokenPattern();
+
     [GeneratedRegex(@"code: (\d{6})")]
     private static partial Regex CodePattern();
 

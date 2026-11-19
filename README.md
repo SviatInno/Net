@@ -1,6 +1,6 @@
 # .NET Core Web API Template for Front End Department / Back End Course
 
-Starter ASP.NET Core Web API for full-stack internship exercises. It currently implements user registration (email + password, optional email confirmation by code or magic link) on PostgreSQL; further exercises add authentication, RBAC and more.
+Starter ASP.NET Core Web API for full-stack internship exercises. It currently implements user registration (email + password, optional email confirmation by code or magic link) and authentication (login with optional email confirmation, JWT access/refresh tokens in HttpOnly cookies, refresh, logout) on PostgreSQL; further exercises add RBAC and more.
 
 ## Repository layout
 
@@ -64,6 +64,12 @@ dotnet dev-certs https --trust
 | `POST` | `/auth/register` | Registers a guest by `email` + `password`. `201` with the active user, or `202` when email confirmation is required. |
 | `POST` | `/auth/register/confirm` | Confirms with `attemptId` + `code` (OTP) or `token` (magic link). `200` with the active user. |
 | `POST` | `/auth/register/resend` | Sends a new code/link for a pending `email`, at most once per 60 seconds. `202`. |
+| `POST` | `/auth/login` | Signs in by `email` + `password`. `204` + auth cookies, or `202` with `attemptId` when login confirmation is on. |
+| `POST` | `/auth/login/confirm` | Finishes sign-in with `attemptId` + `code` (OTP) or `token` (magic link). `204` + auth cookies. |
+| `POST` | `/auth/login/resend` | Sends a new code/link for `attemptId`, at most once per 60 seconds. `202`. |
+| `POST` | `/auth/refresh` | New token pair from the `refresh_token` cookie. `204` + auth cookies. |
+| `POST` | `/auth/logout` | Clears both auth cookies. Always `204`. |
+| `GET` | `/auth/me` | Example protected endpoint: `200` with `userId` for a valid access cookie, otherwise `401`. |
 
 ## Registration
 
@@ -90,7 +96,35 @@ Behavior summary:
 - No session or tokens are issued by registration. RBAC is not connected yet, so no `user` role is assigned; the code marks where it will go (same transaction as activation).
 - Audit log events (IDs 1000–1030) cover registrations, email sends, confirmations and resends; passwords, hashes, codes, tokens and request bodies are never logged.
 
-An example request is available in [`FEDept.BackendCourse.GroupA1.Api.Template.http`](src/FEDept.BackendCourse.GroupA1.Api.Template/FEDept.BackendCourse.GroupA1.Api.Template.http).
+## Authentication
+
+Settings are flat keys, so the environment variables have exactly these names (e.g. `JWT_ISSUER=https://api.example.com`). Keys are base64 of at least 32 random bytes (`openssl rand -base64 32`), and all four keys must be different. If a key is missing, malformed, short or reused, the application stops at startup and the error names the setting (never its value). `appsettings.Development.json` contains dev-only keys; every other environment must supply its own.
+
+| Key | Meaning |
+| --- | --- |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | HS256 signing keys for access (15 min) and refresh (30 days) tokens. Required, different. |
+| `JWT_ISSUER`, `JWT_AUDIENCE` | `iss` / `aud` used when issuing and validating. Required. |
+| `LOGIN_CHALLENGE_HMAC_KEY` | HMAC-SHA256 key for login codes and magic link secrets. Required. |
+| `AUDIT_LOG_HMAC_KEY` | HMAC key for pseudonymous audit IDs of unknown emails (no address in logs). Required. |
+| `LOGIN_EMAIL_CONFIRMATION_ENABLED` | `true`: a correct password is followed by an email challenge. Read per request: a change affects new logins only. Development: `true`. |
+| `LOGIN_EMAIL_CONFIRMATION_METHOD` | `otp` or `magic_link`. An existing attempt keeps its own method. |
+| `LOGIN_MAGIC_LINK_URL` | Frontend page; the email links to `<url>#token=<attemptId>.<secret>`. The page reads the fragment and POSTs it to `/auth/login/confirm`. |
+| `FRONTEND_ORIGIN` | Exact trusted frontend origin when it differs from the API's origin. Empty (default): same origin, no CORS. |
+| `FRONTEND_CROSS_SITE` | `true` when that origin is on another site: auth cookies get `SameSite=None; Secure`. |
+
+Behavior summary:
+
+- Cookies: `access_token` (`Path=/; Max-Age=900`) and `refresh_token` (`Path=/auth/refresh; Max-Age=2592000`), both `HttpOnly; Secure; SameSite=Strict`, host-only. Tokens never appear in a body, a JS-readable header or a URL.
+- JWT payload is exactly `sub, iss, aud, iat, exp, token_use`, with HS256 only and 30 seconds of clock skew. No sessions are stored: refresh rotates the pair but does not revoke the used refresh token, and logout only clears this client's cookies.
+- Every token (access check, refresh) and every login is accepted only for an existing user whose `status` is `active` (`pending`, `blocked`, `deleting`, `deleted` are refused). Roles are never read from the token; the access check passes only the `userId` on.
+- Login errors are neutral: unknown email, wrong password and non-active status give the same `401 invalid_credentials` (an unknown email is checked against a dummy hash, so timing matches). Session errors are `401 invalid_session`. If the database is down the API returns `503 service_unavailable`, not `401`.
+- Email challenge: OTP is 6 digits with 5 entries (the 5th is still checked, then `429 attempts_exhausted`); magic link is 32 random bytes with no entry counter. Both last 10 minutes from the last send. Resend and a repeated login are allowed once per 60 seconds; both replace the secret. Each user has at most one open attempt (partial unique index). Login, confirm and resend lock the user row and then the attempt row (`FOR UPDATE`). The attempt is committed before SMTP is contacted; if SMTP fails, the `503` still carries `attemptId` so the client can resend.
+- Rate limits: `/auth/login` 30 requests/min per IP and 5 failed password checks per email+IP per 15 minutes (checked before hashing; in-memory, per instance). `/auth/refresh` 30 requests/min per IP.
+- CSRF: an unsafe request whose `Origin` is not the API's own origin is accepted only from `FRONTEND_ORIGIN` with the `X-CSRF-Protection: 1` header; otherwise `403 csrf_rejected`. Requests without `Origin` (curl, server-to-server) are not affected.
+- Error codes: `validation_failed`, `invalid_confirmation` (400); `invalid_credentials`, `invalid_session` (401); `csrf_rejected` (403); `rate_limited`, `resend_too_early`, `attempts_exhausted` (429, with `Retry-After`); `email_delivery_failed`, `token_issue_failed`, `service_unavailable` (503).
+- Audit log events: 2000–2050 for authentication and 900–920 for rate limit, database and CSRF. They carry user IDs, attempt IDs, methods and reasons, and JWT failures are reported only as a category (`missing`, `malformed`, `signature`, `expired`, `claims`, `token_use`, `user_inactive`). Emails, passwords, hashes, codes, link tokens, JWTs, cookies and keys are never logged; the request ID comes from the logging scope.
+
+Example requests are available in [`FEDept.BackendCourse.GroupA1.Api.Template.http`](src/FEDept.BackendCourse.GroupA1.Api.Template/FEDept.BackendCourse.GroupA1.Api.Template.http).
 
 ## OpenAPI
 
@@ -104,7 +138,9 @@ The template currently exposes the OpenAPI document only; it does not include a 
 
 ## Frontend integration
 
-CORS is not configured yet. Before calling this API from a browser-based frontend running on a different origin, add a CORS policy for the frontend's development URL and apply it to the request pipeline. Avoid using a permissive policy in a production environment.
+The simplest setup is one origin: serve the frontend and the API from the same host, or proxy `/auth` and the API routes through the frontend dev server (for example Vite's `server.proxy`). Then no CORS or CSRF header is needed and the cookies stay `SameSite=Strict`.
+
+For a frontend on another origin, set `FRONTEND_ORIGIN` (and `FRONTEND_CROSS_SITE=true` if it is on another site, for example another domain or `http` vs `https`). The browser must send `credentials: "include"` and the header `X-CSRF-Protection: 1` on every POST. The JavaScript never sees the tokens: on `401 invalid_session` call `POST /auth/refresh` once, then retry, or go to the login form.
 
 ## Build
 
@@ -118,7 +154,7 @@ dotnet build FEDept.BackendCourse.GroupA1.Api.Template.sln
 dotnet test FEDept.BackendCourse.GroupA1.Api.Template.sln
 ```
 
-The test project uses xUnit. Registration tests are integration tests against a real PostgreSQL started by [Testcontainers](https://dotnet.testcontainers.org/) (Docker must be running) with the real migrations applied; email delivery and time are faked.
+The test project uses xUnit. Registration and authentication tests are integration tests against a real PostgreSQL started by [Testcontainers](https://dotnet.testcontainers.org/) (Docker must be running) with the real migrations applied; email delivery and time are faked.
 
 ## Repository conventions
 

@@ -22,6 +22,59 @@ namespace FEDept.BackendCourse.GroupA1.Api.Template.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FEDept.BackendCourse.GroupA1.Api.Template.Features.Authentication.LoginChallenge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("consumed_at");
+
+                    b.Property<string>("ConsumedReason")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("consumed_reason");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTimeOffset>("LastSentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_sent_at");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("method");
+
+                    b.Property<byte[]>("SecretHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("secret_hash");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex(new[] { "UserId" }, "ix_login_challenges_user_id");
+
+                    b.HasIndex(new[] { "UserId" }, "ux_login_challenges_user_id_open")
+                        .IsUnique()
+                        .HasFilter("consumed_at IS NULL");
+
+                    b.ToTable("login_challenges", (string)null);
+                });
+
             modelBuilder.Entity("FEDept.BackendCourse.GroupA1.Api.Template.Features.Registration.RegistrationChallenge", b =>
                 {
                     b.Property<Guid>("Id")
@@ -115,6 +168,15 @@ namespace FEDept.BackendCourse.GroupA1.Api.Template.Data.Migrations
                         .HasDatabaseName("ux_users_email");
 
                     b.ToTable("users", (string)null);
+                });
+
+            modelBuilder.Entity("FEDept.BackendCourse.GroupA1.Api.Template.Features.Authentication.LoginChallenge", b =>
+                {
+                    b.HasOne("FEDept.BackendCourse.GroupA1.Api.Template.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FEDept.BackendCourse.GroupA1.Api.Template.Features.Registration.RegistrationChallenge", b =>

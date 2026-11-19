@@ -1,3 +1,4 @@
+using FEDept.BackendCourse.GroupA1.Api.Template.Features.Authentication;
 using FEDept.BackendCourse.GroupA1.Api.Template.Features.Registration;
 using FEDept.BackendCourse.GroupA1.Api.Template.Users;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<User> Users => Set<User>();
 
     public DbSet<RegistrationChallenge> RegistrationChallenges => Set<RegistrationChallenge>();
+
+    public DbSet<LoginChallenge> LoginChallenges => Set<LoginChallenge>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -23,9 +26,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             user.Property(u => u.Status)
                 .HasColumnName("status")
                 .HasMaxLength(16)
-                .HasConversion(
-                    s => s == UserStatus.Active ? "active" : "pending",
-                    s => s == "active" ? UserStatus.Active : UserStatus.Pending);
+                .HasConversion(s => UserStatusNames.ToName(s), s => UserStatusNames.FromName(s));
             user.Property(u => u.CreatedAt).HasColumnName("created_at");
             user.Property(u => u.UpdatedAt).HasColumnName("updated_at");
         });
@@ -57,6 +58,41 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             challenge.Property(c => c.ConsumedAt).HasColumnName("consumed_at");
             challenge.Property(c => c.Version).HasColumnName("version").IsConcurrencyToken();
             challenge.Ignore(c => c.IsExhausted);
+        });
+
+        modelBuilder.Entity<LoginChallenge>(challenge =>
+        {
+            challenge.ToTable("login_challenges");
+            challenge.HasKey(c => c.Id);
+            challenge.Property(c => c.Id).HasColumnName("id").ValueGeneratedNever();
+            challenge.Property(c => c.UserId).HasColumnName("user_id");
+            challenge.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(c => c.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            // Named overloads: two separate indexes on the same column.
+            challenge.HasIndex(c => c.UserId, "ix_login_challenges_user_id");
+            // At most one unconsumed attempt per user; also serves "find the open attempt of a user".
+            challenge.HasIndex(c => c.UserId, "ux_login_challenges_user_id_open")
+                .IsUnique()
+                .HasFilter("consumed_at IS NULL");
+            challenge.Property(c => c.Method)
+                .HasColumnName("method")
+                .HasMaxLength(16)
+                .HasConversion(m => LoginChallengeMethods.ToName(m), m => LoginChallengeMethods.FromName(m));
+            challenge.Property(c => c.SecretHash).HasColumnName("secret_hash").IsRequired();
+            challenge.Property(c => c.Attempts).HasColumnName("attempts");
+            challenge.Property(c => c.CreatedAt).HasColumnName("created_at");
+            challenge.Property(c => c.LastSentAt).HasColumnName("last_sent_at");
+            challenge.Property(c => c.ConsumedAt).HasColumnName("consumed_at");
+            challenge.Property(c => c.ConsumedReason)
+                .HasColumnName("consumed_reason")
+                .HasMaxLength(32)
+                .HasConversion(
+                    r => r == null ? null : LoginChallengeMethods.ReasonName(r.Value),
+                    r => r == null ? null : LoginChallengeMethods.ReasonFromName(r));
+            challenge.Ignore(c => c.ExpiresAt);
+            challenge.Ignore(c => c.ResendAllowedAt);
         });
     }
 }
